@@ -1,6 +1,6 @@
-# Mido Adel AI Media Manager — Cloudflare Worker
 
-## Required Worker variables/secrets
+
+ Required Worker variables/secrets
 Add these under Worker → Settings → Variables and Secrets:
 
 - `BOT_TOKEN` — Secret (new token from BotFather; never commit it)
@@ -8,13 +8,13 @@ Add these under Worker → Settings → Variables and Secrets:
 - `OWNER_ID` — Variable: `7469308202`
 - `CHANNEL_ID` — Variable: `@medopho`
 
-## Deploy
+ Deploy
 1. Create or open the Cloudflare Worker.
 2. Replace the editor contents with `worker.js`.
 3. Save and Deploy.
 4. Add the four values above under Settings → Variables and Secrets, then redeploy if prompted.
 
-## Set Telegram webhook
+ Set Telegram webhook
 After deployment, use the Cloudflare Worker URL, for example:
 `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/telegram/webhook`
 
