@@ -1,89 +1,107 @@
 
 import os
 import logging
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+from contextlib import asynccontextmanager
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+from fastapi import FastAPI, Request, HTTPException
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OWNER_ID = os.getenv("OWNER_ID")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+OWNER_ID = int(os.environ["OWNER_ID"])
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@medopho")
+WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
+RENDER_URL = os.environ["RENDER_EXTERNAL_URL"].rstrip("/")
+
+telegram_app = Application.builder().token(BOT_TOKEN).build()
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
     await update.message.reply_text(
-        "أهلاً بيك في Mido Adel AI Media Manager 🚀\n\n"
-        "البوت بدأ التشغيل بنجاح.\n"
-        "استخدم /help لمعرفة الأوامر المتاحة."
+        "أهلاً بيك في Mido Adel AI Media Manager 🚀\n"
+        "البوت بدأ التشغيل بنجاح!\n"
+        "استخدم /help لمعرفة الأوامر."
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = (
-        "🤖 Mido Adel AI Media Manager\n\n"
+    await update.message.reply_text(
         "/start - تشغيل البوت\n"
         "/help - المساعدة\n"
         "/status - حالة البوت\n"
-        "/testchannel - اختبار النشر في القناة\n\n"
-        "المزيد من الوظائف سيتم إضافتها تدريجيًا."
+        "/testchannel - اختبار النشر"
     )
-    await update.message.reply_text(message)
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🟢 البوت يعمل حاليًا ويتصل بخادم Telegram."
-    )
+    await update.message.reply_text("🟢 البوت متصل ويعمل.")
 
 
 async def test_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-
-    if not OWNER_ID or user_id != OWNER_ID:
-        await update.message.reply_text("غير مصرح لك باستخدام الأمر.")
+    if update.effective_user.id != OWNER_ID:
+        await update.message.reply_text("غير مصرح لك.")
         return
 
     try:
         await context.bot.send_message(
             chat_id=CHANNEL_ID,
-            text="🚀 اختبار اتصال Mido Adel AI Media Manager ناجح!"
+            text="🚀 اختبار Mido Adel AI Media Manager ناجح!"
         )
-        await update.message.reply_text("تم إرسال رسالة الاختبار للقناة بنجاح.")
+        await update.message.reply_text("تم إرسال رسالة الاختبار للقناة.")
     except Exception:
-        logger.exception("Channel test failed")
-        await update.message.reply_text(
-            "تعذر النشر. راجع صلاحيات البوت ومعرف القناة وإعدادات الخادم."
-        )
+        logger.exception("Channel publishing failed")
+        await update.message.reply_text("فشل النشر. راجع صلاحيات البوت.")
 
 
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN environment variable is missing.")
-
-    if not OWNER_ID:
-        raise RuntimeError("OWNER_ID environment variable is missing.")
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("testchannel", test_channel))
-
-    logger.info("Mido Adel AI Media Manager is starting...")
-    app.run_polling()
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CommandHandler("help", help_command))
+telegram_app.add_handler(CommandHandler("status", status))
+telegram_app.add_handler(CommandHandler("testchannel", test_channel))
 
 
-if __name__ == "__main__":
-    main()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    await telegram_app.bot.set_webhook(
+        url=f"{RENDER_URL}/telegram/{WEBHOOK_SECRET}",
+        secret_token=WEBHOOK_SECRET
+    )
+
+    logger.info("Telegram webhook is active")
+    yield
+
+    await telegram_app.bot.delete_webhook()
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+async def home():
+    return {"status": "Mido Adel AI Media Manager is running"}
+
+
+@app.post("/telegram/{secret}")
+async def telegram_webhook(secret: str, request: Request):
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403)
+
+    supplied_secret = request.headers.get(
+        "X-Telegram-Bot-Api-Secret-Token", ""
+    )
+
+    if supplied_secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403)
+
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.update_queue.put(update)
+
+    return {"ok": True}
